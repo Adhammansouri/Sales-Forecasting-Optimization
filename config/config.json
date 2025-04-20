@@ -1,0 +1,64 @@
+{
+    "data": {
+        "raw_data_path": "data/raw/sales_data.csv",
+        "processed_data_path": "data/processed/processed_sales_data.csv",
+        "predictions_path": "data/predictions/forecast.csv"
+    },
+    "models": {
+        "model_dir": "models",
+        "xgboost": {
+            "params": {
+                "n_estimators": 1000,
+                "max_depth": 7,
+                "learning_rate": 0.01,
+                "subsample": 0.8,
+                "colsample_bytree": 0.8,
+                "random_state": 42
+            }
+        },
+        "prophet": {
+            "params": {
+                "yearly_seasonality": true,
+                "weekly_seasonality": true,
+                "daily_seasonality": true,
+                "seasonality_mode": "multiplicative"
+            }
+        },
+        "lstm": {
+            "params": {
+                "units_layer1": 100,
+                "units_layer2": 50,
+                "dropout_rate": 0.2,
+                "learning_rate": 0.001,
+                "epochs": 50,
+                "batch_size": 32,
+                "validation_split": 0.1
+            }
+        }
+    },
+    "features": {
+        "target_column": "units_sold",
+        "date_column": "date",
+        "categorical_columns": ["product", "region"],
+        "numerical_columns": ["unit_price", "total_sales"],
+        "group_columns": ["product", "region"]
+    },
+    "training": {
+        "test_size": 0.2,
+        "random_state": 42,
+        "lag_windows": [1, 7, 30],
+        "rolling_windows": [7, 30, 90]
+    },
+    "ensemble": {
+        "weights": {
+            "xgboost": 0.4,
+            "prophet": 0.3,
+            "lstm": 0.3
+        }
+    },
+    "visualization": {
+        "output_dir": "reports/figures",
+        "style": "seaborn",
+        "default_figsize": [12, 8]
+    }
+} 
