@@ -1,120 +1,187 @@
 import os
-import json
+from pathlib import Path
 from datetime import datetime
+import pandas as pd
+
+from src.utils.config import Config, get_config
+from src.utils.logger import get_logger
+from src.utils.validation import DataValidationConfig, DataValidator
+from src.utils.progress import PipelineProgress
 
 from src.data.generate_synthetic_data import generate_synthetic_sales_data, save_data
 from src.data.preprocess_data import preprocess_data
 from src.models.train_model import SalesForecaster
 from src.models.predict import SalesPredictor
 from src.visualization.visualize import SalesVisualizer
-from src.utils.helpers import create_directory_structure, load_config
+
+# Set up logging
+logger = get_logger(__name__, log_dir='logs')
+
+def setup_data_validator(config: Config) -> DataValidator:
+    """Set up data validator with configuration.
+    
+    Args:
+        config: Application configuration
+        
+    Returns:
+        Configured DataValidator instance
+    """
+    validation_config = DataValidationConfig(
+        required_columns=['date', 'sales', 'store_id', 'product_id'],
+        date_column='date',
+        numeric_columns=['sales', 'price', 'promotion'],
+        categorical_columns=['store_id', 'product_id', 'holiday'],
+        min_date='2020-01-01',  # Adjust based on your needs
+        max_date=datetime.now().strftime('%Y-%m-%d')
+    )
+    return DataValidator(validation_config)
 
 def main():
     """Main function to run the entire sales forecasting pipeline."""
-    print("Starting Sales Forecasting Pipeline...")
-    start_time = datetime.now()
-    
-    # Create directory structure
-    print("\n1. Creating directory structure...")
-    create_directory_structure()
-    
-    # Load configuration
-    print("\n2. Loading configuration...")
-    config = load_config()
-    if not config:
-        print("Error: Could not load configuration. Exiting.")
-        return
-    
-    # Generate synthetic data if it doesn't exist
-    if not os.path.exists(config['data']['raw_data_path']):
-        print("\n3. Generating synthetic data...")
-        df = generate_synthetic_sales_data()
-        save_data(df, config['data']['raw_data_path'].split('/')[-1])
-        print(f"Synthetic data generated and saved to {config['data']['raw_data_path']}")
-    else:
-        print("\n3. Raw data already exists, skipping generation...")
-    
-    # Preprocess data
-    print("\n4. Preprocessing data...")
-    processed_df = preprocess_data(
-        input_filepath=config['data']['raw_data_path'],
-        output_filepath=config['data']['processed_data_path']
-    )
-    
-    # Initialize and train models
-    print("\n5. Training models...")
-    forecaster = SalesForecaster(model_dir=config['models']['model_dir'])
-    
-    # Train and evaluate models
     try:
-        forecaster.train_xgboost(processed_df, config['features']['target_column'])
-        print("XGBoost model trained successfully")
+        # Load configuration
+        config = get_config()
+        if not config:
+            logger.error("Could not load configuration")
+            return 1
+            
+        # Initialize progress tracker
+        progress = PipelineProgress(output_dir='progress')
+        progress.start_stage('initialization')
+        
+        # Create necessary directories
+        for dir_path in [
+            config.data.raw_data_path,
+            config.data.processed_data_path,
+            config.models.model_dir,
+            config.visualization.output_dir
+        ]:
+            Path(dir_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        progress.complete_stage('initialization')
+        
+        # Generate synthetic data if needed
+        progress.start_stage('data_generation')
+        if not os.path.exists(config.data.raw_data_path):
+            logger.info("Generating synthetic data...")
+            df = generate_synthetic_sales_data()
+            save_data(df, config.data.raw_data_path)
+            logger.info(f"Synthetic data saved to {config.data.raw_data_path}")
+        else:
+            logger.info("Using existing raw data")
+        progress.complete_stage('data_generation')
+        
+        # Load and validate data
+        progress.start_stage('data_validation')
+        raw_data = pd.read_csv(config.data.raw_data_path)
+        validator = setup_data_validator(config)
+        validation_results = validator.validate_all(raw_data)
+        
+        if not validator.is_valid():
+            logger.error("Data validation failed")
+            progress.fail_stage('data_validation', "Data validation failed")
+            return 1
+            
+        progress.complete_stage('data_validation', metrics=validation_results)
+        
+        # Preprocess data
+        progress.start_stage('preprocessing')
+        processed_df = preprocess_data(
+            input_filepath=config.data.raw_data_path,
+            output_filepath=config.data.processed_data_path
+        )
+        progress.complete_stage('preprocessing')
+        
+        # Train models
+        progress.start_stage('model_training')
+        forecaster = SalesForecaster(model_dir=config.models.model_dir)
+        
+        try:
+            # Train XGBoost
+            logger.info("Training XGBoost model...")
+            xgb_metrics = forecaster.train_xgboost(
+                processed_df,
+                target_column=config.features.target_column
+            )
+            
+            # Train Prophet
+            logger.info("Training Prophet model...")
+            prophet_metrics = forecaster.train_prophet(
+                processed_df,
+                target_column=config.features.target_column
+            )
+            
+            # Train LSTM
+            logger.info("Training LSTM model...")
+            lstm_metrics = forecaster.train_lstm(
+                processed_df,
+                target_column=config.features.target_column
+            )
+            
+            # Save all models
+            forecaster.save_models()
+            
+            training_metrics = {
+                'xgboost': xgb_metrics,
+                'prophet': prophet_metrics,
+                'lstm': lstm_metrics
+            }
+            progress.complete_stage('model_training', metrics=training_metrics)
+            
+        except Exception as e:
+            logger.error(f"Model training failed: {e}")
+            progress.fail_stage('model_training', str(e))
+            return 1
+        
+        # Generate predictions
+        progress.start_stage('prediction')
+        try:
+            predictor = SalesPredictor(model_dir=config.models.model_dir)
+            predictions = predictor.ensemble_predict(
+                processed_df['date'].max(),
+                periods=30,
+                weights=config.ensemble.weights
+            )
+            predictions.to_csv(config.data.predictions_path, index=False)
+            logger.info(f"Predictions saved to {config.data.predictions_path}")
+            progress.complete_stage('prediction')
+            
+        except Exception as e:
+            logger.error(f"Prediction failed: {e}")
+            progress.fail_stage('prediction', str(e))
+            return 1
+        
+        # Generate visualizations
+        progress.start_stage('visualization')
+        try:
+            visualizer = SalesVisualizer(output_dir=config.visualization.output_dir)
+            
+            visualizer.plot_sales_trend(processed_df)
+            visualizer.plot_seasonal_patterns(processed_df)
+            visualizer.plot_product_performance(processed_df)
+            visualizer.plot_regional_analysis(processed_df)
+            visualizer.plot_forecast_comparison(processed_df, predictions)
+            
+            if training_metrics:
+                visualizer.plot_model_performance(training_metrics)
+                
+            progress.complete_stage('visualization')
+            
+        except Exception as e:
+            logger.error(f"Visualization failed: {e}")
+            progress.fail_stage('visualization', str(e))
+            return 1
+        
+        # Complete pipeline
+        progress.complete_pipeline()
+        logger.info("Pipeline completed successfully!")
+        return 0
+        
     except Exception as e:
-        print(f"Error training XGBoost model: {e}")
-    
-    try:
-        forecaster.train_prophet(processed_df, config['features']['target_column'])
-        print("Prophet model trained successfully")
-    except Exception as e:
-        print(f"Error training Prophet model: {e}")
-    
-    try:
-        forecaster.train_lstm(processed_df, config['features']['target_column'])
-        print("LSTM model trained successfully")
-    except Exception as e:
-        print(f"Error training LSTM model: {e}")
-    
-    # Save trained models
-    print("\n6. Saving trained models...")
-    forecaster.save_models()
-    
-    # Generate predictions
-    print("\n7. Generating predictions...")
-    predictor = SalesPredictor(model_dir=config['models']['model_dir'])
-    predictions = predictor.ensemble_predict(
-        processed_df['date'].max(),
-        periods=30,
-        weights=config['ensemble']['weights']
-    )
-    
-    # Save predictions
-    os.makedirs(os.path.dirname(config['data']['predictions_path']), exist_ok=True)
-    predictions.to_csv(config['data']['predictions_path'], index=False)
-    print(f"Predictions saved to {config['data']['predictions_path']}")
-    
-    # Generate visualizations
-    print("\n8. Generating visualizations...")
-    visualizer = SalesVisualizer(output_dir=config['visualization']['output_dir'])
-    
-    # Create various plots
-    visualizer.plot_sales_trend(processed_df)
-    visualizer.plot_seasonal_patterns(processed_df)
-    visualizer.plot_product_performance(processed_df)
-    visualizer.plot_regional_analysis(processed_df)
-    visualizer.plot_forecast_comparison(processed_df, predictions)
-    
-    # Try to plot model performance if metrics exist
-    try:
-        metrics_path = os.path.join(config['models']['model_dir'], 'model_metrics.json')
-        if os.path.exists(metrics_path):
-            with open(metrics_path, 'r') as f:
-                metrics = json.load(f)
-            visualizer.plot_model_performance(metrics)
-    except Exception as e:
-        print(f"Could not generate model performance visualization: {e}")
-    
-    # Calculate and print execution time
-    end_time = datetime.now()
-    execution_time = end_time - start_time
-    
-    print("\nPipeline completed successfully!")
-    print(f"Total execution time: {execution_time}")
-    print("\nResults can be found in:")
-    print(f"- Raw data: {config['data']['raw_data_path']}")
-    print(f"- Processed data: {config['data']['processed_data_path']}")
-    print(f"- Predictions: {config['data']['predictions_path']}")
-    print(f"- Models: {config['models']['model_dir']}")
-    print(f"- Visualizations: {config['visualization']['output_dir']}")
+        logger.error(f"Pipeline failed: {e}")
+        if 'progress' in locals():
+            progress.complete_pipeline()
+        return 1
 
 if __name__ == '__main__':
-    main() 
+    exit(main())
