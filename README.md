@@ -108,7 +108,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 Contributions, issues, and feature requests are welcome! Feel free to check the issues page.
 
-## 📧 Contact
 
-Your Name - your.email@example.com
-Project Link: https://github.com/yourusername/Sales-Forecasting-Optimization
+
