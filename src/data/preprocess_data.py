@@ -2,6 +2,10 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from datetime import datetime
+import logging
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 def load_data(filepath='data/raw/sales_data.csv'):
     """Load the sales data from CSV file."""
@@ -111,30 +115,132 @@ def prepare_data_for_training(df, target_col='units_sold', test_size=0.2):
     
     return X_train, X_test, y_train, y_test
 
+def check_for_nan(df, stage_name="Unknown"):
+    """Check for NaN values in the DataFrame and log their locations.
+    
+    Args:
+        df: DataFrame to check
+        stage_name: Name of the preprocessing stage (for logging)
+        
+    Returns:
+        bool: True if NaN values were found, False otherwise
+    """
+    nan_counts = df.isna().sum()
+    nan_columns = nan_counts[nan_counts > 0]
+    
+    if len(nan_columns) > 0:
+        logger.warning(f"NaN values found after {stage_name} stage:")
+        for col, count in nan_columns.items():
+            logger.warning(f"  - {col}: {count} NaNs ({(count/len(df))*100:.2f}% of data)")
+        return True
+    return False
+
+def handle_missing_values(df, strategy='mean'):
+    """Handle missing values in the DataFrame.
+    
+    Args:
+        df: DataFrame to process
+        strategy: Strategy to handle NaNs ('mean', 'median', 'zero', or 'drop')
+        
+    Returns:
+        DataFrame with NaNs handled
+    """
+    df = df.copy()
+    
+    if strategy == 'drop':
+        # Drop rows with NaN values
+        original_len = len(df)
+        df = df.dropna()
+        dropped = original_len - len(df)
+        logger.info(f"Dropped {dropped} rows with NaN values ({(dropped/original_len)*100:.2f}% of data)")
+        return df
+    
+    # For numeric columns, fill NaNs based on strategy
+    numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
+    
+    for col in numeric_cols:
+        if df[col].isna().sum() > 0:
+            if strategy == 'mean':
+                fill_value = df[col].mean()
+                logger.info(f"Filling NaNs in '{col}' with mean: {fill_value:.4f}")
+            elif strategy == 'median':
+                fill_value = df[col].median()
+                logger.info(f"Filling NaNs in '{col}' with median: {fill_value:.4f}")
+            elif strategy == 'zero':
+                fill_value = 0
+                logger.info(f"Filling NaNs in '{col}' with zero")
+            else:
+                raise ValueError(f"Unknown strategy: {strategy}")
+                
+            df[col] = df[col].fillna(fill_value)
+    
+    # For categorical columns, fill with mode
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns
+    
+    for col in categorical_cols:
+        if df[col].isna().sum() > 0:
+            mode_value = df[col].mode()[0]
+            logger.info(f"Filling NaNs in '{col}' with mode: {mode_value}")
+            df[col] = df[col].fillna(mode_value)
+    
+    return df
+
 def preprocess_data(input_filepath='data/raw/sales_data.csv',
-                   output_filepath='data/processed/processed_sales_data.csv'):
+                   output_filepath='data/processed/processed_sales_data.csv',
+                   nan_strategy='mean'):
     """Main function to preprocess the data."""
     # Load data
     df = load_data(input_filepath)
+    logger.info(f"Loaded data from {input_filepath} with shape {df.shape}")
+    
+    # Check for NaNs in raw data
+    check_for_nan(df, "initial load")
     
     # Add features
     df = add_time_features(df)
+    check_for_nan(df, "adding time features")
+    
     df = add_lag_features(df)
+    check_for_nan(df, "adding lag features")
+    
+    # Handle missing values from lag features
+    df = handle_missing_values(df, strategy=nan_strategy)
+    
     df = add_rolling_features(df)
+    check_for_nan(df, "adding rolling features")
+    
+    # Handle any missing values from rolling features
+    df = handle_missing_values(df, strategy=nan_strategy)
     
     # Encode categorical features
     df = encode_categorical_features(df)
+    check_for_nan(df, "encoding categorical features")
     
     # Scale numerical features
     df, scaler = scale_numerical_features(df)
+    check_for_nan(df, "scaling numerical features")
+    
+    # Final check for NaNs
+    has_nans = check_for_nan(df, "final check")
+    if has_nans:
+        logger.warning("WARNING: Processed data still contains NaN values. This may cause model training to fail.")
+        # Final attempt to clean any remaining NaNs
+        df = df.fillna(0)
+        logger.info("Filled remaining NaNs with zeros as a last resort")
     
     # Save processed data
     df.to_csv(output_filepath, index=False)
-    print(f"Processed data saved to {output_filepath}")
+    logger.info(f"Processed data saved to {output_filepath} with shape {df.shape}")
     
     return df
 
 if __name__ == '__main__':
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
     # Process the data
     df = preprocess_data()
     

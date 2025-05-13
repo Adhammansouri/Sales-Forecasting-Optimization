@@ -1,39 +1,23 @@
 {
     "data": {
-        "train_test_split": 0.2,
-        "validation_split": 0.1,
-        "sequence_length": 30,
+        "raw_data_path": "data/raw/sales_data.csv",
+        "processed_data_path": "data/processed/processed_sales_data.csv",
+        "predictions_path": "data/predictions/forecast_results.csv",
+        "features": {
         "target_column": "units_sold",
-        "date_column": "date"
-    },
-    "preprocessing": {
-        "handle_missing": true,
-        "handle_outliers": true,
-        "scaling": "minmax",
-        "encoding": "label"
-    },
-    "features": {
-        "time_features": [
-            "year",
-            "month",
-            "day",
-            "day_of_week",
-            "day_of_year",
-            "week_of_year",
-            "is_weekend",
-            "is_month_end"
-        ],
+            "date_column": "date",
         "categorical_features": [
-            "product_category",
-            "store_location"
+                "product",
+                "region"
         ],
         "numerical_features": [
-            "price",
-            "promotion_discount",
-            "stock_level"
+                "unit_price",
+                "promotion"
         ]
+        }
     },
     "models": {
+        "model_dir": "models",
         "xgboost": {
             "n_estimators": 1000,
             "max_depth": 7,
@@ -90,18 +74,16 @@
             }
         }
     },
+    "visualization": {
+        "output_dir": "visualizations",
+        "plot_style": "seaborn",
+        "dpi": 300
+    },
     "ensemble": {
         "weights": {
             "xgboost": 0.4,
             "prophet": 0.3,
             "lstm": 0.3
         }
-    },
-    "paths": {
-        "raw_data": "data/raw",
-        "processed_data": "data/processed",
-        "models": "models",
-        "predictions": "data/predictions",
-        "logs": "logs"
     }
 } 

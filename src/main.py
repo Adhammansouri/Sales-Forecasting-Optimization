@@ -27,10 +27,10 @@ def setup_data_validator(config: Config) -> DataValidator:
         Configured DataValidator instance
     """
     validation_config = DataValidationConfig(
-        required_columns=['date', 'sales', 'store_id', 'product_id'],
+        required_columns=['date', 'product', 'region', 'units_sold', 'unit_price', 'total_sales', 'promotion'],
         date_column='date',
-        numeric_columns=['sales', 'price', 'promotion'],
-        categorical_columns=['store_id', 'product_id', 'holiday'],
+        numeric_columns=['units_sold', 'unit_price', 'total_sales', 'promotion'],
+        categorical_columns=['product', 'region'],
         min_date='2020-01-01',  # Adjust based on your needs
         max_date=datetime.now().strftime('%Y-%m-%d')
     )
@@ -51,12 +51,13 @@ def main():
         
         # Create necessary directories
         for dir_path in [
-            config.data.raw_data_path,
-            config.data.processed_data_path,
+            os.path.dirname(config.data.raw_data_path),
+            os.path.dirname(config.data.processed_data_path),
+            os.path.dirname(config.data.predictions_path),
             config.models.model_dir,
             config.visualization.output_dir
         ]:
-            Path(dir_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(dir_path).mkdir(parents=True, exist_ok=True)
         
         progress.complete_stage('initialization')
         
@@ -65,7 +66,7 @@ def main():
         if not os.path.exists(config.data.raw_data_path):
             logger.info("Generating synthetic data...")
             df = generate_synthetic_sales_data()
-            save_data(df, config.data.raw_data_path)
+            save_data(df, os.path.basename(config.data.raw_data_path))
             logger.info(f"Synthetic data saved to {config.data.raw_data_path}")
         else:
             logger.info("Using existing raw data")
@@ -73,7 +74,7 @@ def main():
         
         # Load and validate data
         progress.start_stage('data_validation')
-        raw_data = pd.read_csv(config.data.raw_data_path)
+        raw_data = pd.read_csv(config.data.raw_data_path, parse_dates=['date'])
         validator = setup_data_validator(config)
         validation_results = validator.validate_all(raw_data)
         
@@ -82,6 +83,7 @@ def main():
             progress.fail_stage('data_validation', "Data validation failed")
             return 1
             
+        logger.info("Data validation successful")
         progress.complete_stage('data_validation', metrics=validation_results)
         
         # Preprocess data
@@ -101,21 +103,21 @@ def main():
             logger.info("Training XGBoost model...")
             xgb_metrics = forecaster.train_xgboost(
                 processed_df,
-                target_column=config.features.target_column
+                target_column=config.data.features.get("target_column", "units_sold")
             )
             
             # Train Prophet
             logger.info("Training Prophet model...")
             prophet_metrics = forecaster.train_prophet(
                 processed_df,
-                target_column=config.features.target_column
+                target_column=config.data.features.get("target_column", "units_sold")
             )
             
             # Train LSTM
             logger.info("Training LSTM model...")
             lstm_metrics = forecaster.train_lstm(
                 processed_df,
-                target_column=config.features.target_column
+                target_column=config.data.features.get("target_column", "units_sold")
             )
             
             # Save all models
@@ -140,7 +142,7 @@ def main():
             predictions = predictor.ensemble_predict(
                 processed_df['date'].max(),
                 periods=30,
-                weights=config.ensemble.weights
+                weights=config.ensemble.get("weights", {"xgboost": 0.4, "prophet": 0.3, "lstm": 0.3})
             )
             predictions.to_csv(config.data.predictions_path, index=False)
             logger.info(f"Predictions saved to {config.data.predictions_path}")

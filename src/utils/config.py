@@ -6,6 +6,7 @@ from pathlib import Path
 
 @dataclass
 class ModelConfig:
+    model_dir: str
     xgboost: Dict[str, Any]
     prophet: Dict[str, Any]
     lstm: Dict[str, Any]
@@ -71,6 +72,7 @@ class Config:
                 'features': self.data.features
             },
             'models': {
+                'model_dir': self.models.model_dir,
                 'xgboost': self.models.xgboost,
                 'prophet': self.models.prophet,
                 'lstm': self.models.lstm

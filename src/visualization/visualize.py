@@ -1,238 +1,267 @@
+import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import os
-import json
+from matplotlib.ticker import MaxNLocator
+from matplotlib.dates import DateFormatter
+import matplotlib.dates as mdates
 
 class SalesVisualizer:
-    def __init__(self, output_dir='reports/figures'):
-        """Initialize the visualizer with output directory."""
+    """Class for generating visualizations of sales data and forecasts."""
+    
+    def __init__(self, output_dir='visualizations', style='ggplot', dpi=300):
+        """Initialize the visualizer.
+        
+        Args:
+            output_dir: Directory to save visualizations
+            style: Matplotlib style to use
+            dpi: DPI for saved figures
+        """
         self.output_dir = output_dir
+        self.dpi = dpi
+        
+        # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
         
-        # Set style for matplotlib
-        plt.style.use('seaborn')
-        
-    def plot_sales_trend(self, df, save=True):
-        """Plot overall sales trend."""
-        fig = px.line(
-            df,
-            x='date',
-            y='total_sales',
-            title='Overall Sales Trend Over Time'
-        )
-        
-        if save:
-            fig.write_html(os.path.join(self.output_dir, 'sales_trend.html'))
-        return fig
+        # Set style
+        plt.style.use(style)
     
-    def plot_seasonal_patterns(self, df, save=True):
-        """Plot seasonal patterns in sales."""
-        # Create subplots
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=(
-                'Monthly Sales Pattern',
-                'Day of Week Pattern',
-                'Yearly Sales Pattern',
-                'Weekly Sales Pattern'
-            )
-        )
+    def plot_sales_trend(self, df):
+        """Plot overall sales trend over time.
         
-        # Monthly pattern
-        monthly_sales = df.groupby(df['date'].dt.month)['total_sales'].mean()
-        fig.add_trace(
-            go.Scatter(x=monthly_sales.index, y=monthly_sales.values, name='Monthly'),
-            row=1, col=1
-        )
+        Args:
+            df: DataFrame with processed data
+        """
+        plt.figure(figsize=(12, 6))
         
-        # Day of week pattern
-        daily_sales = df.groupby(df['date'].dt.dayofweek)['total_sales'].mean()
-        fig.add_trace(
-            go.Scatter(x=daily_sales.index, y=daily_sales.values, name='Daily'),
-            row=1, col=2
-        )
+        # Group by date and sum sales
+        daily_sales = df.groupby('date')['units_sold'].sum().reset_index()
         
-        # Yearly pattern
-        yearly_sales = df.groupby(df['date'].dt.year)['total_sales'].mean()
-        fig.add_trace(
-            go.Scatter(x=yearly_sales.index, y=yearly_sales.values, name='Yearly'),
-            row=2, col=1
-        )
+        # Plot
+        plt.plot(daily_sales['date'], daily_sales['units_sold'], lw=2)
         
-        # Weekly pattern
-        weekly_sales = df.groupby(df['date'].dt.isocalendar().week)['total_sales'].mean()
-        fig.add_trace(
-            go.Scatter(x=weekly_sales.index, y=weekly_sales.values, name='Weekly'),
-            row=2, col=2
-        )
+        # Add trend line
+        z = np.polyfit(np.arange(len(daily_sales)), daily_sales['units_sold'], 1)
+        p = np.poly1d(z)
+        plt.plot(daily_sales['date'], p(np.arange(len(daily_sales))), "r--", lw=1, alpha=0.7)
         
-        fig.update_layout(height=800, title_text="Seasonal Sales Patterns")
+        # Customize
+        plt.title('Overall Sales Trend', fontsize=16)
+        plt.xlabel('Date', fontsize=12)
+        plt.ylabel('Total Units Sold', fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
         
-        if save:
-            fig.write_html(os.path.join(self.output_dir, 'seasonal_patterns.html'))
-        return fig
+        # Save
+        plt.savefig(os.path.join(self.output_dir, 'sales_trend.png'), dpi=self.dpi)
+        plt.close()
+        
+        print("Sales trend plot saved")
     
-    def plot_product_performance(self, df, save=True):
-        """Plot product-wise sales performance."""
-        product_sales = df.groupby('product')['total_sales'].agg(['sum', 'mean'])
+    def plot_seasonal_patterns(self, df):
+        """Plot seasonal patterns in sales.
         
-        fig = make_subplots(
-            rows=1, cols=2,
-            subplot_titles=('Total Sales by Product', 'Average Sales by Product')
-        )
+        Args:
+            df: DataFrame with processed data
+        """
+        fig, axes = plt.subplots(2, 1, figsize=(12, 10))
         
-        fig.add_trace(
-            go.Bar(
-                x=product_sales.index,
-                y=product_sales['sum'],
-                name='Total Sales'
-            ),
-            row=1, col=1
-        )
+        # Monthly seasonality
+        monthly_sales = df.groupby([df['date'].dt.year, df['date'].dt.month])['units_sold'].sum().reset_index()
+        monthly_sales.columns = ['Year', 'Month', 'Total Sales']
+        monthly_sales_pivot = monthly_sales.pivot(index='Month', columns='Year', values='Total Sales')
         
-        fig.add_trace(
-            go.Bar(
-                x=product_sales.index,
-                y=product_sales['mean'],
-                name='Average Sales'
-            ),
-            row=1, col=2
-        )
+        monthly_sales_pivot.plot(ax=axes[0])
+        axes[0].set_title('Monthly Sales by Year', fontsize=14)
+        axes[0].set_xlabel('Month', fontsize=12)
+        axes[0].set_ylabel('Total Units Sold', fontsize=12)
+        axes[0].grid(True, alpha=0.3)
+        axes[0].xaxis.set_major_locator(MaxNLocator(integer=True))
         
-        fig.update_layout(height=500, title_text="Product Performance Analysis")
+        # Weekly seasonality
+        weekly_sales = df.groupby(df['date'].dt.dayofweek)['units_sold'].mean().reset_index()
+        weekly_sales.columns = ['Day of Week', 'Average Units Sold']
+        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        weekly_sales['Day Name'] = weekly_sales['Day of Week'].apply(lambda x: days[x])
         
-        if save:
-            fig.write_html(os.path.join(self.output_dir, 'product_performance.html'))
-        return fig
+        sns.barplot(x='Day Name', y='Average Units Sold', data=weekly_sales, ax=axes[1])
+        axes[1].set_title('Average Sales by Day of Week', fontsize=14)
+        axes[1].set_xlabel('Day of Week', fontsize=12)
+        axes[1].set_ylabel('Average Units Sold', fontsize=12)
+        axes[1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, 'seasonal_patterns.png'), dpi=self.dpi)
+        plt.close()
+        
+        print("Seasonal patterns plot saved")
     
-    def plot_regional_analysis(self, df, save=True):
-        """Plot regional sales analysis."""
-        regional_sales = df.groupby(['region', 'product'])['total_sales'].sum().unstack()
+    def plot_product_performance(self, df):
+        """Plot product performance comparison.
         
-        fig = px.imshow(
-            regional_sales,
-            title='Regional Sales Heatmap by Product',
-            labels=dict(x='Product', y='Region', color='Total Sales'),
-            aspect='auto'
-        )
+        Args:
+            df: DataFrame with processed data
+        """
+        plt.figure(figsize=(12, 8))
         
-        if save:
-            fig.write_html(os.path.join(self.output_dir, 'regional_analysis.html'))
-        return fig
+        # Group by product and sum sales
+        product_sales = df.groupby('product')['units_sold'].sum().sort_values(ascending=False).reset_index()
+        
+        # Plot
+        ax = sns.barplot(x='product', y='units_sold', data=product_sales)
+        
+        # Customize
+        plt.title('Total Sales by Product', fontsize=16)
+        plt.xlabel('Product', fontsize=12)
+        plt.ylabel('Total Units Sold', fontsize=12)
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(True, alpha=0.3)
+        
+        # Add value labels
+        for p in ax.patches:
+            ax.annotate(f'{int(p.get_height())}', 
+                       (p.get_x() + p.get_width() / 2., p.get_height()),
+                       ha = 'center', va = 'bottom',
+                       xytext = (0, 5), textcoords = 'offset points')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, 'product_performance.png'), dpi=self.dpi)
+        plt.close()
+        
+        print("Product performance plot saved")
     
-    def plot_forecast_comparison(self, actual, predictions, save=True):
-        """Plot comparison of actual vs predicted values."""
-        fig = go.Figure()
+    def plot_regional_analysis(self, df):
+        """Plot regional sales analysis.
         
-        # Plot actual values
-        fig.add_trace(
-            go.Scatter(
-                x=actual['date'],
-                y=actual['total_sales'],
-                name='Actual',
-                line=dict(color='blue')
-            )
-        )
+        Args:
+            df: DataFrame with processed data
+        """
+        fig, axes = plt.subplots(1, 2, figsize=(15, 6))
         
-        # Plot predictions from each model
-        colors = {'xgboost': 'red', 'prophet': 'green', 'lstm': 'orange'}
-        for model in ['xgboost', 'prophet', 'lstm']:
-            if f'{model}_prediction' in predictions.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=predictions['date'],
-                        y=predictions[f'{model}_prediction'],
-                        name=f'{model.upper()} Prediction',
-                        line=dict(color=colors[model])
-                    )
-                )
+        # Regional total sales
+        region_sales = df.groupby('region')['units_sold'].sum().sort_values(ascending=False).reset_index()
+        sns.barplot(x='region', y='units_sold', data=region_sales, ax=axes[0])
+        axes[0].set_title('Total Sales by Region', fontsize=14)
+        axes[0].set_xlabel('Region', fontsize=12)
+        axes[0].set_ylabel('Total Units Sold', fontsize=12)
         
-        # Plot ensemble prediction
-        fig.add_trace(
-            go.Scatter(
-                x=predictions['date'],
-                y=predictions['ensemble_prediction'],
-                name='Ensemble Prediction',
-                line=dict(color='purple', width=2)
-            )
-        )
+        # Regional trend over time
+        region_time_sales = df.groupby(['date', 'region'])['units_sold'].sum().reset_index()
+        for region in region_time_sales['region'].unique():
+            subset = region_time_sales[region_time_sales['region'] == region]
+            axes[1].plot(subset['date'], subset['units_sold'], label=region)
         
-        fig.update_layout(
-            title='Sales Forecast Comparison',
-            xaxis_title='Date',
-            yaxis_title='Sales',
-            hovermode='x unified'
-        )
+        axes[1].set_title('Sales Trends by Region', fontsize=14)
+        axes[1].set_xlabel('Date', fontsize=12)
+        axes[1].set_ylabel('Total Units Sold', fontsize=12)
+        axes[1].legend()
         
-        if save:
-            fig.write_html(os.path.join(self.output_dir, 'forecast_comparison.html'))
-        return fig
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, 'regional_analysis.png'), dpi=self.dpi)
+        plt.close()
+        
+        print("Regional analysis plot saved")
     
-    def plot_model_performance(self, metrics, save=True):
-        """Plot model performance metrics comparison."""
-        models = list(metrics.keys())
-        metrics_df = pd.DataFrame(metrics).T
+    def plot_forecast_comparison(self, historical_df, forecast_df):
+        """Plot comparison of forecast with historical data.
         
-        fig = make_subplots(
-            rows=1, cols=3,
-            subplot_titles=('MAE Comparison', 'RMSE Comparison', 'R² Score Comparison')
-        )
+        Args:
+            historical_df: DataFrame with historical data
+            forecast_df: DataFrame with forecasted data
+        """
+        plt.figure(figsize=(12, 6))
         
-        # Plot MAE
-        fig.add_trace(
-            go.Bar(x=models, y=metrics_df['mae'], name='MAE'),
-            row=1, col=1
-        )
+        # Prepare historical data
+        historical = historical_df.groupby('date')['units_sold'].sum().reset_index()
+        historical['data_type'] = 'Historical'
         
-        # Plot RMSE
-        fig.add_trace(
-            go.Bar(x=models, y=metrics_df['rmse'], name='RMSE'),
-            row=1, col=2
-        )
+        # Prepare forecast data - assuming 'ensemble_prediction' is the main forecast column
+        forecast = forecast_df[['date', 'ensemble_prediction']].copy()
+        forecast.columns = ['date', 'units_sold']
+        forecast['data_type'] = 'Forecast'
         
-        # Plot R2
-        fig.add_trace(
-            go.Bar(x=models, y=metrics_df['r2'], name='R²'),
-            row=1, col=3
-        )
+        # Combine data
+        combined = pd.concat([historical, forecast])
         
-        fig.update_layout(height=400, title_text="Model Performance Comparison")
+        # Plot
+        sns.lineplot(x='date', y='units_sold', hue='data_type', data=combined, 
+                    style='data_type', markers=True, dashes=False)
         
-        if save:
-            fig.write_html(os.path.join(self.output_dir, 'model_performance.html'))
-        return fig
+        # Customize
+        plt.title('Historical Data vs. Forecast', fontsize=16)
+        plt.xlabel('Date', fontsize=12)
+        plt.ylabel('Total Units Sold', fontsize=12)
+        plt.grid(True, alpha=0.3)
+        
+        # Format x-axis date ticks
+        plt.gca().xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
+        plt.gcf().autofmt_xdate()
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, 'forecast_comparison.png'), dpi=self.dpi)
+        plt.close()
+        
+        print("Forecast comparison plot saved")
+    
+    def plot_model_performance(self, metrics):
+        """Plot model performance comparison.
+        
+        Args:
+            metrics: Dictionary with model metrics
+        """
+        # Create DataFrame for easier plotting
+        models = []
+        maes = []
+        rmses = []
+        r2s = []
+        
+        for model_name, model_metrics in metrics.items():
+            models.append(model_name)
+            maes.append(model_metrics['mae'])
+            rmses.append(model_metrics['rmse'])
+            r2s.append(model_metrics['r2'])
+        
+        df = pd.DataFrame({
+            'Model': models,
+            'MAE': maes,
+            'RMSE': rmses,
+            'R²': r2s
+        })
+        
+        # Plot
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        
+        # MAE (lower is better)
+        sns.barplot(x='Model', y='MAE', data=df, ax=axes[0])
+        axes[0].set_title('Mean Absolute Error (Lower is Better)', fontsize=14)
+        
+        # RMSE (lower is better)
+        sns.barplot(x='Model', y='RMSE', data=df, ax=axes[1])
+        axes[1].set_title('Root Mean Squared Error (Lower is Better)', fontsize=14)
+        
+        # R² (higher is better)
+        sns.barplot(x='Model', y='R²', data=df, ax=axes[2])
+        axes[2].set_title('R² Score (Higher is Better)', fontsize=14)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, 'model_performance.png'), dpi=self.dpi)
+        plt.close()
+        
+        print("Model performance plot saved")
 
-def main():
-    """Main function to generate all visualizations."""
-    # Load data
-    raw_data = pd.read_csv('data/raw/sales_data.csv', parse_dates=['date'])
-    processed_data = pd.read_csv('data/processed/processed_sales_data.csv', parse_dates=['date'])
-    predictions = pd.read_csv('data/predictions/forecast.csv', parse_dates=['date'])
+if __name__ == '__main__':
+    # Example usage
+    from src.data.preprocess_data import preprocess_data
     
-    # Initialize visualizer
+    # Get processed data
+    df = pd.read_csv('data/processed/processed_sales_data.csv', parse_dates=['date'])
+    
+    # Create visualizer
     visualizer = SalesVisualizer()
     
     # Generate visualizations
-    visualizer.plot_sales_trend(raw_data)
-    visualizer.plot_seasonal_patterns(raw_data)
-    visualizer.plot_product_performance(raw_data)
-    visualizer.plot_regional_analysis(raw_data)
-    visualizer.plot_forecast_comparison(raw_data, predictions)
-    
-    # Load and plot model performance
-    try:
-        with open('models/model_metrics.json', 'r') as f:
-            metrics = json.load(f)
-        visualizer.plot_model_performance(metrics)
-    except Exception as e:
-        print(f"Could not plot model performance: {e}")
-    
-    print("All visualizations have been generated and saved in the reports/figures directory.")
-
-if __name__ == '__main__':
-    main() 
+    visualizer.plot_sales_trend(df)
+    visualizer.plot_seasonal_patterns(df)
+    visualizer.plot_product_performance(df)
+    visualizer.plot_regional_analysis(df)
